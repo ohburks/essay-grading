@@ -156,6 +156,44 @@ export interface GradingProgress {
   label: string;
 }
 
+export type CitationStatus = 'pending' | 'fetched' | 'indexed' | 'unverifiable' | 'error';
+export type ResolutionMethod = 'direct_url' | 'doi' | 'crossref_search' | 'unresolved' | '';
+
+export interface CitationEntry {
+  ordinal: number;
+  sourceKey: string;
+  rawCitation: string;
+  resolvedUrl: string;
+  resolutionMethod: ResolutionMethod;
+  status: CitationStatus;
+  error: string;
+  chunkCount: number;
+}
+
+export type FactCheckVerdict =
+  | 'supported'
+  | 'contradicted'
+  | 'not_addressed'
+  | 'unverifiable_source'
+  | 'unchecked';
+
+export interface FactCheckStatement {
+  statementIndex: number;
+  statementText: string;
+  citationMarker: string;
+  sourceKey: string;
+  matchConfidence: 'high' | 'low' | '';
+  verdict: FactCheckVerdict;
+  evidenceQuote: string;
+  reasoning: string;
+  checkedAt: string;
+}
+
+export interface FactCheckResult {
+  citations: CitationEntry[];
+  statements: FactCheckStatement[];
+}
+
 export function median(nums: number[]): number {
   const s = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);

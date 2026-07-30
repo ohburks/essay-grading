@@ -216,6 +216,57 @@ def init_db():
                 created_at TEXT NOT NULL
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS cited_sources (
+                source_key        TEXT PRIMARY KEY,
+                style              TEXT NOT NULL DEFAULT '',
+                raw_citation       TEXT NOT NULL DEFAULT '',
+                author             TEXT NOT NULL DEFAULT '',
+                title              TEXT NOT NULL DEFAULT '',
+                year               TEXT NOT NULL DEFAULT '',
+                citation_url       TEXT NOT NULL DEFAULT '',
+                doi                TEXT NOT NULL DEFAULT '',
+                resolved_url       TEXT NOT NULL DEFAULT '',
+                resolution_method  TEXT NOT NULL DEFAULT '',
+                status             TEXT NOT NULL DEFAULT 'pending'
+                                   CHECK(status IN ('pending','fetched','indexed','unverifiable','error')),
+                error              TEXT NOT NULL DEFAULT '',
+                chunk_count        INTEGER NOT NULL DEFAULT 0,
+                fetched_at         TEXT NOT NULL DEFAULT '',
+                indexed_at         TEXT NOT NULL DEFAULT '',
+                created_at         TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS assessment_citations (
+                assessment_id TEXT NOT NULL,
+                ordinal       INTEGER NOT NULL,
+                source_key    TEXT NOT NULL,
+                raw_citation  TEXT NOT NULL DEFAULT '',
+                created_at    TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (assessment_id, ordinal)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_assessment_citations_source "
+                  "ON assessment_citations(source_key)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS fact_check_results (
+                assessment_id     TEXT NOT NULL,
+                statement_index   INTEGER NOT NULL,
+                statement_text    TEXT NOT NULL DEFAULT '',
+                citation_marker   TEXT NOT NULL DEFAULT '',
+                source_key        TEXT NOT NULL DEFAULT '',
+                match_confidence  TEXT NOT NULL DEFAULT '',
+                verdict           TEXT NOT NULL DEFAULT 'unchecked'
+                                  CHECK(verdict IN ('supported','contradicted','not_addressed',
+                                                    'unverifiable_source','unchecked')),
+                evidence_quote    TEXT NOT NULL DEFAULT '',
+                evidence_chunk_id TEXT NOT NULL DEFAULT '',
+                reasoning         TEXT NOT NULL DEFAULT '',
+                checked_at        TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (assessment_id, statement_index)
+            )
+        """)
         c.commit()
 
 
@@ -522,7 +573,10 @@ def update_assessment(assessment_id: str, **fields):
 
 def delete_assessment(assessment_id: str):
     with _conn() as c:
-        for table in ("score_records", "layer_b_results", "assessment_runs", "jobs"):
+        # Note: cited_sources is NOT cleared here -- it's a global, dedup'd
+        # cache other assessments may still reference.
+        for table in ("score_records", "layer_b_results", "assessment_runs", "jobs",
+                     "assessment_citations", "fact_check_results"):
             c.execute(f"DELETE FROM {table} WHERE assessment_id=?", (assessment_id,))
         c.execute("DELETE FROM assessments WHERE id=?", (assessment_id,))
         c.commit()
@@ -825,6 +879,126 @@ def set_style_mold(key: str, content_id: str, version: str, style_hash: str, not
             "VALUES (?, ?, ?, ?, ?, datetime('now'))",
             (key, content_id, version, style_hash, json.dumps(notes)),
         )
+        c.commit()
+
+
+# ── Cited-sources cache (global, dedup'd document cache for citation
+# fact-checking -- see services.citations.pipeline.get_or_fetch_source) ──────
+
+def upsert_cited_source(source_key: str, *, style: str = "", raw_citation: str = "",
+                        author: str = "", title: str = "", year: str = "",
+                        citation_url: str = "", doi: str = ""):
+    """Insert-if-absent only: does not overwrite an existing row's fetch/index
+    state. Use update_cited_source for status transitions."""
+    with _conn() as c:
+        c.execute(
+            "INSERT OR IGNORE INTO cited_sources "
+            "(source_key, style, raw_citation, author, title, year, citation_url, "
+            " doi, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (source_key, style, raw_citation, author, title, year, citation_url,
+             doi, utcnow()),
+        )
+        c.commit()
+
+
+def update_cited_source(source_key: str, **fields):
+    allowed = {"resolved_url", "resolution_method", "status", "error",
+              "chunk_count", "fetched_at", "indexed_at"}
+    updates, params = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            raise ValueError(f"cannot update field: {k}")
+        updates.append(f"{k}=?")
+        params.append(v)
+    if not updates:
+        return
+    params.append(source_key)
+    with _conn() as c:
+        c.execute(f"UPDATE cited_sources SET {', '.join(updates)} WHERE source_key=?", params)
+        c.commit()
+
+
+def get_cited_source(source_key: str):
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM cited_sources WHERE source_key=?", (source_key,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def reset_cited_sources_for_retry(source_keys: list):
+    if not source_keys:
+        return
+    with _conn() as c:
+        c.executemany(
+            "UPDATE cited_sources SET status='pending', error='' WHERE source_key=?",
+            [(k,) for k in source_keys],
+        )
+        c.commit()
+
+
+def link_assessment_citation(assessment_id: str, ordinal: int, source_key: str,
+                             raw_citation: str):
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO assessment_citations "
+            "(assessment_id, ordinal, source_key, raw_citation, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (assessment_id, ordinal, source_key, raw_citation, utcnow()),
+        )
+        c.commit()
+
+
+def get_assessment_citations(assessment_id: str):
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ac.assessment_id, ac.ordinal, ac.source_key, ac.raw_citation, "
+            "       cs.resolved_url, cs.resolution_method, cs.status, cs.error, "
+            "       cs.chunk_count "
+            "FROM assessment_citations ac LEFT JOIN cited_sources cs "
+            "  ON cs.source_key = ac.source_key "
+            "WHERE ac.assessment_id=? ORDER BY ac.ordinal",
+            (assessment_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_assessment_citations(assessment_id: str):
+    with _conn() as c:
+        c.execute("DELETE FROM assessment_citations WHERE assessment_id=?", (assessment_id,))
+        c.commit()
+
+
+def upsert_fact_check_result(assessment_id: str, statement_index: int, rec: dict):
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO fact_check_results "
+            "(assessment_id, statement_index, statement_text, citation_marker, "
+            " source_key, match_confidence, verdict, evidence_quote, "
+            " evidence_chunk_id, reasoning, checked_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (assessment_id, statement_index, rec.get("statement_text", ""),
+             rec.get("citation_marker", ""), rec.get("source_key", ""),
+             rec.get("match_confidence", ""), rec.get("verdict", "unchecked"),
+             rec.get("evidence_quote", ""), rec.get("evidence_chunk_id", ""),
+             rec.get("reasoning", ""), utcnow()),
+        )
+        c.commit()
+
+
+def get_fact_check_results(assessment_id: str):
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM fact_check_results WHERE assessment_id=? "
+            "ORDER BY statement_index",
+            (assessment_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_fact_check_results(assessment_id: str):
+    with _conn() as c:
+        c.execute("DELETE FROM fact_check_results WHERE assessment_id=?", (assessment_id,))
         c.commit()
 
 

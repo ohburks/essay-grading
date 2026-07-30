@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import admin, auth, chat, content, export, grading, sessions
+from .api import admin, auth, chat, citations, content, export, grading, sessions
 from .db import database as db
 from .db import seed_content
 
@@ -24,6 +24,7 @@ def create_app() -> FastAPI:
     app.include_router(content.router)
     app.include_router(sessions.router)
     app.include_router(grading.router)
+    app.include_router(citations.router)
     app.include_router(chat.router)
     app.include_router(admin.router)
     app.include_router(export.router)

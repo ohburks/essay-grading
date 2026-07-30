@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Dashboard } from '../components/Dashboard';
+import { FactCheckPanel } from '../components/FactCheckPanel';
 import { LayerBPanel } from '../components/LayerBPanel';
 import type { AssessmentDetail, ContentItem, GradingProgress, Rubric } from '../types';
 
-type Tab = 'dashboard' | 'layerb';
+type Tab = 'dashboard' | 'layerb' | 'factcheck';
 
 export default function SessionDetail() {
   const { id = '' } = useParams();
@@ -88,7 +89,9 @@ export default function SessionDetail() {
         <div>
           <div className="kicker">{assessment.name}</div>
           <h1 className="font-display mt-0.5 text-[1.7rem] leading-tight" style={{ fontWeight: 560 }}>
-            {tab === 'dashboard' ? 'Scores & divergence' : 'How the student worked with AI'}
+            {tab === 'dashboard' ? 'Scores & divergence'
+              : tab === 'layerb' ? 'How the student worked with AI'
+              : 'Fact-check against cited sources'}
           </h1>
         </div>
         <div className="flex items-center gap-2">
@@ -108,7 +111,7 @@ export default function SessionDetail() {
       </header>
 
       <nav className="mb-4 flex gap-1 text-xs" aria-label="Session views">
-        {(['dashboard', 'layerb'] as Tab[]).map((t) => (
+        {(['dashboard', 'layerb', 'factcheck'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -116,7 +119,7 @@ export default function SessionDetail() {
             style={tab === t ? { borderColor: 'var(--accent)', color: 'var(--accent)', fontWeight: 600 } : { borderColor: 'var(--gridline)', color: 'var(--ink-secondary)' }}
             aria-current={tab === t ? 'page' : undefined}
           >
-            {t === 'dashboard' ? 'Scores & Divergence' : 'AI Reliance'}
+            {t === 'dashboard' ? 'Scores & Divergence' : t === 'layerb' ? 'AI Reliance' : 'Fact-Check'}
           </button>
         ))}
       </nav>
@@ -143,6 +146,7 @@ export default function SessionDetail() {
         <Dashboard assessment={assessment} rubric={rubricItem.payload} onChanged={() => void refetch()} />
       )}
       {tab === 'layerb' && <LayerBPanel layerB={assessment.layerB} />}
+      {tab === 'factcheck' && <FactCheckPanel assessmentId={id} active={tab === 'factcheck'} />}
     </div>
   );
 }

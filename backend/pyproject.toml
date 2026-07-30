@@ -20,6 +20,11 @@ llm = [
     "openai>=1.30",
     "anthropic>=0.40",
 ]
+citations = [
+    "chromadb>=0.5",
+    "pypdf>=4.0",
+    "beautifulsoup4>=4.12",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -30,3 +35,7 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: exercises a real chromadb embedding-model download; excluded by default",
+]
+addopts = "-m \"not integration\""

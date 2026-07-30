@@ -90,6 +90,14 @@ PROVIDERS = {
 
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "Claude")
 
+# ── Citation fact-checking (optional; pip install -e backend[citations]) ─────
+# Crossref's "polite pool": an email in every request gets faster, more
+# reliable responses per Crossref's etiquette policy. Only used as a
+# fallback when a citation has no URL of its own.
+CROSSREF_MAILTO = _env("CROSSREF_MAILTO")
+CITATIONS_FETCH_TIMEOUT_SECS = float(_env("CITATIONS_FETCH_TIMEOUT_SECS") or 15)
+CROSSREF_MIN_INTERVAL_SECS = float(_env("CROSSREF_MIN_INTERVAL_SECS") or 0.2)
+
 
 def provider_config(name: str):
     """Resolve a provider by name; returns None when unknown."""

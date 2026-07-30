@@ -10,9 +10,9 @@ can drive the engine with a FakeLLM and the API layer wires in the configured
 provider (core.llm.llm_chat_json + _extract_json).
 """
 
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from ..textmatch import normalize_text as _normalize_text
 from .aggregate import aggregate_passes
 from .molding import _style_hash
 from .prompts import (build_product_prompt, build_product_system,
@@ -31,13 +31,6 @@ def _style_status(criterion: dict, grading_style: str, style_note: str) -> str:
     if style_note:
         return "applied"
     return "unavailable" if criterion.get("styleEligible") else "ineligible"
-
-
-def _normalize_text(s: str) -> str:
-    """Whitespace-collapse + quote-unify + lowercase, mirroring the TS guard."""
-    s = re.sub(r"\s+", " ", s)
-    s = re.sub(r"[\"'‘’“”]", "'", s)
-    return s.lower()
 
 
 def normalize_pass(raw: dict, channel: str, source: dict, style_status: str = "none") -> dict:
